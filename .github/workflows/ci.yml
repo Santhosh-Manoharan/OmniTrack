@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose
+        run: docker compose config
+
+      - name: Check workflow JSON files
+        run: |
+          for f in n8n-workflows/*.json; do
+            python3 -c "import json; json.load(open('$f'))" && echo "✅ $f" || echo "❌ $f"
+          done
+
+      - name: Lint markdown
+        uses: avto-dev/markdown-lint@v1
+        with:
+          args: '**/*.md'

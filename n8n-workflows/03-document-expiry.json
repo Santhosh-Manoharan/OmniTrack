@@ -1,0 +1,48 @@
+{
+  "name": "Document Expiry Alerts",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }] } },
+      "id": "schedule",
+      "name": "Daily 6 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://paperless:8000/api/documents/",
+        "headers": { "Authorization": "Token e61f76876d0bb609a95eba80bf3c81a75e702e15" },
+        "qs": { "created__date__gte": "={{ $now.minus({years:1}).toFormat('yyyy-MM-dd') }}", "page_size": 100 }
+      },
+      "id": "fetch_docs",
+      "name": "Fetch Recent Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const docs = $input.first().json.results || [];\nconst alerts = [];\nconst now = new Date();\nfor (const doc of docs) {\n  // Check custom fields for expiry date (stored as metadata)\n  if (doc.custom_fields) {\n    for (const field of doc.custom_fields) {\n      if (field.name === 'expiry_date' && field.value_date) {\n        const expiry = new Date(field.value_date);\n        const daysUntil = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));\n        if (daysUntil <= 30 && daysUntil >= 0) {\n          alerts.push({\n            json: {\n              doc_id: doc.id,\n              title: doc.title,\n              expiry_date: field.value_date,\n              days_remaining: daysUntil,\n              urgency: daysUntil <= 7 ? 'HIGH' : 'WARNING'\n            }\n          });\n        }\n      }\n    }\n  }\n}\nreturn alerts.length ? alerts : [{ json: { message: 'No expiring documents' } }];"
+      },
+      "id": "check_expiry",
+      "name": "Check Expiry Dates",
+      "type": "n8n-nodes-base.code",
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "method": "POST",
+        "body": "={\n  \"text\": \"📅 *Document Expiry Alert*\\n\\n{{ $json.urgency === 'HIGH' ? '🔴 HIGH PRIORITY' : '🟡 WARNING' }}\\n\\n*Document:* {{ $json.title }}\\n*Expiry:* {{ $json.expiry_date }}\\n*Days Left:* {{ $json.days_remaining }}\\n\\n<http://localhost:8000/documents/{{ $json.doc_id }}|View in Paperless>\"\n}"
+      },
+      "id": "alert",
+      "name": "Send Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "Daily 6 AM": { "main": [[{ "node": "Fetch Recent Documents", "type": "main", "index": 0 }]] },
+    "Fetch Recent Documents": { "main": [[{ "node": "Check Expiry Dates", "type": "main", "index": 0 }]] },
+    "Check Expiry Dates": { "main": [[{ "node": "Send Alert", "type": "main", "index": 0 }]] }
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "name": "Receipt to Transaction - Production",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "minutesInterval": 5 }] },
+        "filters": { "hasAttachment": true, "size": "small" }
+      },
+      "id": "gmail_trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "position": [200, 300],
+      "credentials": { "gmailOAuth2": { "id": "GMAIL_CREDENTIAL_ID" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $input.first().json;\nconst parts = email.payload?.parts || [];\nconst attachments = [];\nfor (const part of parts) {\n  if (part.filename && part.body?.attachmentId) {\n    attachments.push({\n      json: {\n        filename: part.filename,\n        mimeType: part.mimeType,\n        attachmentId: part.body.attachmentId,\n        messageId: email.id,\n        subject: email.payload?.headers?.find(h => h.name === 'Subject')?.value || 'No subject'\n      }\n    });\n  }\n}\nreturn attachments.length ? attachments : [{ json: { noAttachment: true } }];"
+      },
+      "id": "extract_meta",
+      "name": "Extract Attachment Meta",
+      "type": "n8n-nodes-base.code",
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": { "boolean": [{ "value1": "={{ $json.noAttachment }}", "value2": true }] }
+      },
+      "id": "filter_attach",
+      "name": "Has Attachment?",
+      "type": "n8n-nodes-base.if",
+      "position": [550, 300]
+    },
+    {
+      "parameters": {
+        "resource": "attachment",
+        "operation": "get",
+        "messageId": "={{ $json.messageId }}",
+        "attachmentId": "={{ $json.attachmentId }}"
+      },
+      "id": "get_attach",
+      "name": "Download Attachment",
+      "type": "n8n-nodes-base.gmail",
+      "credentials": { "gmailOAuth2": { "id": "GMAIL_CREDENTIAL_ID" } },
+      "position": [750, 250]
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "body": "={\n  \"model\": \"mistral\",\n  \"prompt\": \"You are a receipt analyzer. Extract structured data from the following receipt text/PDF content. Return ONLY a valid JSON object (no markdown, no explanation) with these exact keys:\\nvendor (company/store name), date (YYYY-MM-DD format), amount (number only, no currency symbol), currency (INR or USD), category (one of: groceries, utilities, office, meals, travel, medical, entertainment, other), tax (GST/tax amount or 0), description (one line summary), context (business or family or personal).\\nIf you cannot extract a field, use null for it.\\n\\nReceipt content follows:\\n{{ Buffer.from($json.data, 'base64').toString('utf8').substring(0, 4000) }}\",\n  \"stream\": false,\n  \"options\": { \"temperature\": 0.1, \"num_predict\": 512 }\n}",
+        "options": { "timeout": 120000 }
+      },
+      "id": "ollama_extract",
+      "name": "Ollama AI Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [950, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nlet text = resp.response || '';\n// Extract first valid JSON object\nconst m = text.match(/\\{[\\s\\S]*\\}/);\nif (!m) return [{ json: { error: 'No JSON in response', raw: text.substring(0, 500) } }];\ntry {\n  const data = JSON.parse(m[0]);\n  // Sanitize\n  return [{\n    json: {\n      vendor: data.vendor || 'Unknown',\n      date: data.date || new Date().toISOString().split('T')[0],\n      amount: parseFloat(data.amount) || 0,\n      currency: data.currency || 'INR',\n      category: data.category || 'other',\n      tax: parseFloat(data.tax) || 0,\n      description: data.description || '',\n      context: data.context || 'personal',\n      raw: text.substring(0, 200)\n    }\n  }];\n} catch(e) {\n  return [{ json: { error: e.message, raw: text.substring(0, 500) } }];\n}"
+      },
+      "id": "parse_result",
+      "name": "Parse AI Result",
+      "type": "n8n-nodes-base.code",
+      "position": [1150, 250]
+    },
+    {
+      "parameters": {
+        "url": "http://paperless:8000/api/documents/post_document/",
+        "method": "POST",
+        "headers": { "Authorization": "Token e61f76876d0bb609a95eba80bf3c81a75e702e15" },
+        "body": "={\n  \"document\": \"={{ $('Download Attachment').first().json.data }}\",\n  \"title\": \"Receipt - {{ $json.vendor }} - {{ $json.date }}\",\n  \"tags\": [\"receipt\", \"{{ $json.category }}\", \"auto-processed\"]\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "paperless_upload",
+      "name": "Store in Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "method": "POST",
+        "body": "={\n  \"text\": \"🧾 *Receipt Processed*\\n\\n*Vendor:* {{ $json.vendor }}\\n*Amount:* {{ $json.currency }} {{ $json.amount }}\\n*Category:* {{ $json.category }}\\n*Date:* {{ $json.date }}\\n*Context:* {{ $json.context }}\\n\\nStored in Paperless + Ready for categorization\"\n}"
+      },
+      "id": "slack_notify",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1550, 200]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": { "main": [[{ "node": "Extract Attachment Meta", "type": "main", "index": 0 }]] },
+    "Extract Attachment Meta": { "main": [[{ "node": "Has Attachment?", "type": "main", "index": 0 }]] },
+    "Has Attachment?": { "main": [[{ "node": null, "type": "main", "index": 0 }], [{ "node": "Download Attachment", "type": "main", "index": 0 }]] },
+    "Download Attachment": { "main": [[{ "node": "Ollama AI Extract", "type": "main", "index": 0 }]] },
+    "Ollama AI Extract": { "main": [[{ "node": "Parse AI Result", "type": "main", "index": 0 }]] },
+    "Parse AI Result": { "main": [[{ "node": "Store in Paperless", "type": "main", "index": 0 }]] },
+    "Store in Paperless": { "main": [[{ "node": "Slack Notification", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

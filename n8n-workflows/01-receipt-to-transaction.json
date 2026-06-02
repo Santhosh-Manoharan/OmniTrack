@@ -1,0 +1,79 @@
+{
+  "name": "Receipt to Transaction",
+  "nodes": [
+    {
+      "parameters": {
+        "pollInterval": 5,
+        "triggerOn": "message",
+        "filters": { "hasAttachment": true }
+      },
+      "id": "gmail_trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract attachment from email\nconst email = $input.first().json;\nconst attachments = [];\nfor (const part of email.payload.parts || []) {\n  if (part.filename && part.body.attachmentId) {\n    attachments.push({\n      json: {\n        filename: part.filename,\n        mimeType: part.mimeType,\n        attachmentId: part.body.attachmentId,\n        messageId: email.id\n      }\n    });\n  }\n}\nreturn attachments;"
+      },
+      "id": "extract_attachment",
+      "name": "Extract Attachment",
+      "type": "n8n-nodes-base.code",
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "resource": "attachment",
+        "operation": "get",
+        "messageId": "={{ $json.messageId }}",
+        "attachmentId": "={{ $json.attachmentId }}"
+      },
+      "id": "get_attachment",
+      "name": "Get Attachment Content",
+      "type": "n8n-nodes-base.gmail",
+      "credentials": { "gmailOAuth2": { "id": "gmail_cred" } },
+      "position": [650, 300],
+      "webhookId": "get_attachment_content"
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "body": "{\n  \"model\": \"mistral:7b\",\n  \"prompt\": \"Extract the following from this receipt image/text and return ONLY valid JSON: vendor (company name), date (YYYY-MM-DD), amount (number), currency (INR or USD), category (one of: groceries, utilities, office, meals, travel, medical, entertainment, other), tax (number or null), description (brief), context (business, family, or personal). Receipt content: {{ $json.data ? Buffer.from($json.data, 'base64').toString('utf8').substring(0, 3000) : 'No text found' }}\",\n  \"stream\": false,\n  \"options\": { \"temperature\": 0.1 }\n}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "ollama_extract",
+      "name": "Ollama Extract Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Ollama JSON response\nconst response = $input.first().json;\nlet text = response.response || response.body?.response || '';\n// Extract JSON from response\nconst jsonMatch = text.match(/\\{[\\s\\S]*\\}/);\nif (jsonMatch) {\n  try {\n    const data = JSON.parse(jsonMatch[0]);\n    return [{ json: data }];\n  } catch(e) {\n    return [{ json: { error: JSON.stringify(e), raw: text } }];\n  }\n}\nreturn [{ json: { error: 'No JSON found', raw: text } }];"
+      },
+      "id": "parse_json",
+      "name": "Parse JSON",
+      "type": "n8n-nodes-base.code",
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://paperless:8000/api/documents/post_document/",
+        "method": "POST",
+        "headers": { "Authorization": "Token {{ $env.PAPERLESS_API_TOKEN }}" },
+        "body": "{\n  \"document\": \"={{ $('Get Attachment Content').first().json.data }}\",\n  \"title\": \"Receipt - {{ $json.vendor || 'Unknown' }} - {{ $json.date || 'No date' }}\",\n  \"tags\": [\"receipt\", \"{{ $json.category || 'other' }}\"]\n}"
+      },
+      "id": "paperless_upload",
+      "name": "Upload to Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": { "main": [[{ "node": "Extract Attachment", "type": "main", "index": 0 }]] },
+    "Extract Attachment": { "main": [[{ "node": "Get Attachment Content", "type": "main", "index": 0 }]] },
+    "Get Attachment Content": { "main": [[{ "node": "Ollama Extract Data", "type": "main", "index": 0 }]] },
+    "Ollama Extract Data": { "main": [[{ "node": "Parse JSON", "type": "main", "index": 0 }]] },
+    "Parse JSON": { "main": [[{ "node": "Upload to Paperless", "type": "main", "index": 0 }]] }
+  }
+}

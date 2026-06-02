@@ -1,0 +1,20 @@
+# Environment variables
+.env
+
+# Docker volumes (managed by Docker)
+postgres_data/
+redis_data/
+n8n_data/
+firefly_*/
+paperless_*/
+ollama_data/
+budibase_data/
+prometheus_data/
+grafana_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
