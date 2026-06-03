@@ -1,0 +1,52 @@
+{
+  "name": "Bank Transaction Email Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "minutesInterval": 5 }] },
+        "filters": {
+          "from": "@sbi.co.in,@hdfcbank.com,@icici.com,@bankofbaroda.com,@axisbank.com,@kotak.com,@indusind.com,@yesbank.in,@pnb.co.in,@canarabank.com,@unionbankofindia.co.in,@iob.in,@bankofindia.co.in,@centralbankofindia.co.in,@ucoindianbank.com",
+          "subject": "transaction,debited,credited,payment,UPI,IMPS,RTGS,NEFT"
+        }
+      },
+      "id": "trigger",
+      "name": "Gmail Trigger - Bank Emails",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "position": [200, 300],
+      "credentials": { "gmailOAuth2": { "id": "GMAIL_CRED" } }
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral:7b\",\n  \"prompt\": \"You are an expert financial data extraction assistant. Your task is to analyze the provided raw email text from a bank transaction notification and extract key payment details into a clean, structured JSON format.\\n\\nAnalyze the input text carefully and extract the following fields:\\n1. amount: The numeric value of the transaction (convert to a float number, remove currency symbols and commas).\\n2. currency: The 3-letter ISO currency code (e.g., INR, USD, EUR) detected from the symbol or text.\\n3. transaction_type: Must be either DEBIT (money spent/sent) or CREDIT (money received).\\n4. merchant_name: The name of the store, person, or business that received the money. Clean up common bank strings (e.g., change VPA xxx@xxx to just the brand name like Swiggy, Amazon, etc.).\\n5. bank_name: The name of the bank sending the email.\\n6. account_identifier: The last 4 digits of the bank account or card used (if visible, otherwise output null).\\n7. timestamp: The date and time of the transaction converted into ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ). Use the current year 2026 if the year is missing from the text.\\n\\nRules:\\n- Do not make up or guess any information. If a specific field is absolutely missing from the text, return null for that field.\\n- Your response must contain ONLY the raw JSON object. Do not include any introductory text, explanations, or markdown code blocks.\\n\\nInput Bank Email Text: {{ $('Gmail Trigger - Bank Emails').first().json.textAsHtml }}\",\n  \"stream\": false,\n  \"options\": { \"temperature\": 0.1, \"num_predict\": 300 }\n}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "ollama",
+      "name": "LLM Extract Transaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://upload-helper:8888/upload",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": \"{{ JSON.parse($json.response).transaction_type }} ₹{{ JSON.parse($json.response).amount }} - {{ JSON.parse($json.response).merchant_name }} ({{ JSON.parse($json.response).bank_name }})\",\n  \"content\": \"Bank: {{ JSON.parse($json.response).bank_name }}\\nType: {{ JSON.parse($json.response).transaction_type }}\\nAmount: {{ JSON.parse($json.response).currency }} {{ JSON.parse($json.response).amount }}\\nMerchant: {{ JSON.parse($json.response).merchant_name }}\\nAccount: {{ JSON.parse($json.response).account_identifier }}\\nTime: {{ JSON.parse($json.response).timestamp }}\\n\\n--- Raw Email ---\\n{{ $('Gmail Trigger - Bank Emails').first().json.textAsHtml }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "paperless",
+      "name": "Store in Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [750, 300]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger - Bank Emails": { "main": [[{ "node": "LLM Extract Transaction", "type": "main", "index": 0 }]] },
+    "LLM Extract Transaction": { "main": [[{ "node": "Store in Paperless", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
