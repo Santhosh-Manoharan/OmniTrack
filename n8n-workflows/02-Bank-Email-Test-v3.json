@@ -1,0 +1,61 @@
+{
+  "name": "02-Bank-Email-Test-v3",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {},
+      "typeVersion": 1
+    },
+    {
+      "id": "set_sample",
+      "name": "Sample Bank Email",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        400,
+        300
+      ],
+      "parameters": {
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "name": "email_text",
+              "type": "string",
+              "value": "Dear Customer,\nYour a/c no. XXXX1234 is debited for Rs. 500.00 on 02-Jun-2026 14:30:00 towards UPI/P2A/1234567890/swiggyupi@axisbank/AXIS Bank.\nYour a/c balance is Rs. 15,230.50.\n- State Bank of India"
+            }
+          ]
+        }
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "ollama",
+      "name": "Parse with Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        650,
+        300
+      ],
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral:7b\",\n  \"prompt\": \"Parse this Indian bank email and return ONLY a JSON array. Format: [{amount: number, currency: INR, transaction_type: DEBIT/CREDIT/TRANSFER, merchant_name: brand name or null, merchant_upi: upi@id or null, bank_name: bank, account_last4: 4 digits or null, category: groceries/transport/food/entertainment/medical/utilities/shopping/rent/salary/transfer/insurance/emi/other, date: YYYY-MM-DD, time: HH:MM or null}]. Rules: amount no commas/symbols, merchant_name clean brand, null for missing. ONLY JSON array.\\n\\nEmail: {{ $('Sample Bank Email').first().json.email_text }}\",\n  \"stream\": false,\n  \"options\": {\"temperature\": 0.1, \"num_predict\": 300}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "typeVersion": 4.4
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

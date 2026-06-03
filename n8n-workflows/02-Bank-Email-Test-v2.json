@@ -1,0 +1,76 @@
+{
+  "name": "02-Bank-Email-Test-v2",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {},
+      "typeVersion": 1
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "position": [
+        500,
+        500
+      ],
+      "parameters": {
+        "model": "mistral:7b",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "llm",
+      "name": "Parse Bank Email",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "text": "You are a financial data extraction expert. Parse this Indian bank transaction email and return ONLY a valid JSON array. Even if there is only one transaction, wrap it in an array [].\n\nEmail: Dear Customer, Your a/c no. XXXX1234 is debited for Rs. 500.00 on 02-Jun-2026 14:30:00 towards UPI/P2A/1234567890/swiggyupi@axisbank/AXIS Bank. Your a/c balance is Rs. 15,230.50. - SBI\n\nReturn ONLY JSON array in this exact format:\n[{\"amount\": 500.00, \"currency\": \"INR\", \"transaction_type\": \"DEBIT\", \"merchant_name\": \"Swiggy\", \"merchant_upi\": \"swiggyupi@axisbank\", \"bank_name\": \"SBI\", \"account_last4\": \"1234\", \"category\": \"food\", \"date\": \"2026-06-02\", \"time\": \"14:30\"}]\n\nRules:\n- amount: number only (no Rs/INR/commas)\n- merchant_upi: clean UPI ID (swiggyupi@axisbank)\n- merchant_name: brand name only (Swiggy)\n- If field not found, use null\n- Return ONLY the JSON array, no explanation",
+        "options": {
+          "systemMessage": "You extract financial transaction data from Indian bank emails. Always return valid JSON array only."
+        }
+      },
+      "retryOnFail": true,
+      "typeVersion": 1.6
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Bank Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Parse Bank Email",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
