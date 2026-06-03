@@ -1,0 +1,45 @@
+{
+  "name": "GPay Tracker - Test",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"mistral:7b\",\n  \"prompt\": \"Parse this Google Pay transaction email and return ONLY a valid JSON object with these exact keys: amount (number), payee (string), type (debit or credit or transfer), date (YYYY-MM-DD), category (groceries/transport/entertainment/medical/utilities/shopping/food/transfer/salary/other), description (brief one line). Do not include any explanation.\\n\\nEmail subject: You paid Rs. 500.00 to Amazon\\nEmail body: You have successfully paid Rs. 500.00 to Amazon via Google Pay. Transaction ID: TXN123456789. Date: 02 Jun 2026 14:30:00 IST. Your account balance is Rs. 15,230.50.\",\n  \"stream\": false,\n  \"options\": { \"temperature\": 0.1, \"num_predict\": 200 }\n}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "ollama",
+      "name": "Ollama Parse Transaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://upload-helper:8888/upload",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": \"GPay: {{ JSON.parse($json.response).type }} ₹{{ JSON.parse($json.response).amount }} to {{ JSON.parse($json.response).payee }}\",\n  \"content\": \"Subject: You paid Rs. 500.00 to Amazon\\nBody: You have successfully paid Rs. 500.00 to Amazon via Google Pay.\\n\\nParsed: {{ $json.response }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "store",
+      "name": "Store in Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [750, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Ollama Parse Transaction", "type": "main", "index": 0 }]] },
+    "Ollama Parse Transaction": { "main": [[{ "node": "Store in Paperless", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
