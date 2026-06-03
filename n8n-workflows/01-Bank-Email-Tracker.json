@@ -1,0 +1,233 @@
+{
+  "name": "01-Bank-Email-Tracker",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Gmail Trigger - Bank Emails",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "simple": false,
+        "filters": {
+          "from": "@sbi.co.in,@hdfcbank.com,@icici.com,@bankofbaroda.com,@axisbank.com,@kotak.com,@indusind.com,@yesbank.in,@pnb.co.in,@canarabank.com,@unionbankofindia.co.in,@iob.in,@bankofindia.co.in",
+          "subject": "debited,credited,transaction,payment,UPI,IMPS"
+        },
+        "options": {
+          "downloadAttachments": true
+        },
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED",
+          "name": "Gmail OAuth2"
+        }
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "set_data",
+      "name": "Prepare Email Data",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        450,
+        300
+      ],
+      "parameters": {
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "name": "email_date",
+              "type": "string",
+              "value": "={{ $json.date }}"
+            },
+            {
+              "name": "email_subject",
+              "type": "string",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "email_from",
+              "type": "string",
+              "value": "={{ $json.from.text }}"
+            },
+            {
+              "name": "email_text",
+              "type": "string",
+              "value": "={{ $json.textAsHtml }}"
+            }
+          ]
+        }
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "llm_chain",
+      "name": "Extract Transaction with LLM",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "text": "Email Date: {{ $json.email_date }}\nEmail Subject: {{ $json.email_subject }}\nEmail From: {{ $json.email_from }}\n\nEmail Content:\n{{ $json.email_text }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an expert financial data extraction assistant. Analyze the following Indian bank transaction notification email and extract ALL transactions mentioned. Return an array of transaction objects.\n\nRules:\n- Amount: numeric value only (remove Rs/INR/commas)\n- Merchant name: clean brand name (swiggy@axisbank\u2192Swiggy)\n- UPI ID: capture separately\n- Date: use email date if not in body\n- Return ONLY valid JSON array"
+            }
+          ]
+        },
+        "promptType": "define",
+        "hasOutputParser": true
+      },
+      "retryOnFail": true,
+      "typeVersion": 1.6
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "model": "mistral:7b",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "parser",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        900,
+        500
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"title\": \"Bank Transaction\", \"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"amount\": {\"type\": \"number\", \"description\": \"Transaction amount as float\"}, \"currency\": {\"type\": \"string\", \"enum\": [\"INR\", \"USD\", \"EUR\", \"GBP\"]}, \"transaction_type\": {\"type\": \"string\", \"enum\": [\"DEBIT\", \"CREDIT\", \"TRANSFER\"]}, \"merchant_name\": {\"type\": [\"string\", \"null\"], \"description\": \"Clean merchant name\"}, \"merchant_upi\": {\"type\": [\"string\", \"null\"], \"description\": \"UPI ID\"}, \"bank_name\": {\"type\": \"string\"}, \"account_last4\": {\"type\": [\"string\", \"null\"]}, \"category\": {\"type\": \"string\", \"enum\": [\"groceries\", \"utilities\", \"transport\", \"food\", \"entertainment\", \"medical\", \"education\", \"rent\", \"shopping\", \"salary\", \"transfer\", \"fuel\", \"insurance\", \"emi\", \"other\"]}, \"date\": {\"type\": \"string\", \"description\": \"YYYY-MM-DD\"}, \"time\": {\"type\": [\"string\", \"null\"], \"description\": \"HH:MM\"}}, \"required\": [\"amount\", \"currency\", \"transaction_type\", \"category\", \"date\"]}}"
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "split",
+      "name": "Split Transactions",
+      "type": "n8n-nodes-base.splitOut",
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "options": {},
+        "fieldToSplitOut": "output"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "paperless",
+      "name": "Store in Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1350,
+        200
+      ],
+      "parameters": {
+        "url": "http://upload-helper:8888/upload",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"title\": \"{{ $json.transaction_type }} {{ $json.currency }} {{ $json.amount }} - {{ $json.merchant_name }}\", \"content\": \"Bank: {{ $json.bank_name }}\\nType: {{ $json.transaction_type }}\\nAmount: {{ $json.currency }} {{ $json.amount }}\\nMerchant: {{ $json.merchant_name }}\\nCategory: {{ $json.category }}\\nDate: {{ $json.date }}\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "typeVersion": 4.4
+    }
+  ],
+  "connections": {
+    "Gmail Trigger - Bank Emails": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email Data": {
+      "main": [
+        [
+          {
+            "node": "Extract Transaction with LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Transaction with LLM",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Extract Transaction with LLM",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Transaction with LLM": {
+      "main": [
+        [
+          {
+            "node": "Split Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Transactions": {
+      "main": [
+        [
+          {
+            "node": "Store in Paperless",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

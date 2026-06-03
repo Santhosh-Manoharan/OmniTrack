@@ -1,0 +1,168 @@
+{
+  "name": "03-Receipt-Upload",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook - Receipt Upload",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload-receipt",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama Vision Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "position": [
+        500,
+        500
+      ],
+      "parameters": {
+        "model": "mistral:7b",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "parser",
+      "name": "Receipt Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\"title\": \"Receipt Data\", \"type\": \"object\", \"properties\": {\"vendor\": {\"type\": \"string\", \"description\": \"Store/merchant name\"}, \"date\": {\"type\": \"string\", \"description\": \"Receipt date YYYY-MM-DD\"}, \"items\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"name\": {\"type\": \"string\"}, \"price\": {\"type\": \"number\"}}}}, \"subtotal\": {\"type\": \"number\"}, \"tax\": {\"type\": [\"number\", \"null\"]}, \"total\": {\"type\": \"number\"}, \"payment_method\": {\"type\": [\"string\", \"null\"], \"description\": \"Cash, UPI, Card\"}, \"category\": {\"type\": \"string\", \"enum\": [\"groceries\", \"utilities\", \"transport\", \"food\", \"entertainment\", \"medical\", \"education\", \"rent\", \"shopping\", \"other\"]}}, \"required\": [\"vendor\", \"date\", \"total\", \"category\"]}"
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "llm",
+      "name": "Extract Receipt Data",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "text": "Please analyze this receipt image and extract the following information:\n1. Vendor/store name\n2. Date of purchase\n3. Line items with prices\n4. Subtotal, tax, and total amount\n5. Payment method (cash, UPI, card)\n6. Category (groceries/food/transport/shopping/medical/other)\n\nReturn ONLY valid JSON.",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Analyze the receipt and extract structured data."
+            }
+          ]
+        },
+        "promptType": "define",
+        "hasOutputParser": true
+      },
+      "retryOnFail": true,
+      "typeVersion": 1.6
+    },
+    {
+      "id": "paperless",
+      "name": "Store Receipt in Paperless",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "url": "http://upload-helper:8888/upload",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"title\": \"Receipt - {{ $json.vendor }} - {{ $json.date }} - \\u20b9{{ $json.total }}\", \"content\": \"Vendor: {{ $json.vendor }}\\nDate: {{ $json.date }}\\nTotal: \\u20b9{{ $json.total }}\\nCategory: {{ $json.category }}\\nPayment: {{ $json.payment_method }}\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "typeVersion": 4.4
+    },
+    {
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { 'success': True, 'vendor': $json.vendor, 'total': $json.total, 'category': $json.category } }}"
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Webhook - Receipt Upload": {
+      "main": [
+        [
+          {
+            "node": "Extract Receipt Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Vision Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Receipt Data",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receipt Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Extract Receipt Data",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Receipt Data": {
+      "main": [
+        [
+          {
+            "node": "Store Receipt in Paperless",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Receipt in Paperless": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
