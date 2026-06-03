@@ -10,7 +10,7 @@
 
 | Name | Value |
 |------|-------|
-| `PAPERLESS_API_TOKEN` | `e61f76876d0bb609a95eba80bf3c81a75e702e15` |
+| `PAPERLESS_API_TOKEN` | `your-paperless-token-here` |
 | `SLACK_WEBHOOK_URL` | *(leave blank for now, add later)* |
 
 ## Step 2: Import Workflows
