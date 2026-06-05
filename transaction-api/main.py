@@ -282,11 +282,20 @@ async def _insert_txns(txns: list, raw_text: str, source: str = "bank_email"):
     results = []
     errors = []
     for i, item in enumerate(txns):
+        raw_amount = item.get("amount")
+        if raw_amount is None:
+            errors.append({"index": i, "detail": "amount is null, skipping"})
+            continue
+        try:
+            amount = float(raw_amount)
+        except (TypeError, ValueError) as e:
+            errors.append({"index": i, "detail": f"Invalid amount '{raw_amount}': {e}"})
+            continue
         txn_data = {
             "transaction_date": item.get("date") or item.get("transaction_date"),
-            "amount": float(item.get("amount", 0)),
-            "currency": item.get("currency", "INR"),
-            "transaction_type": item.get("transaction_type", "DEBIT"),
+            "amount": amount,
+            "currency": item.get("currency", "INR") or "INR",
+            "transaction_type": item.get("transaction_type", "DEBIT") or "DEBIT",
             "merchant_name": item.get("merchant_name"),
             "merchant_upi": item.get("merchant_upi"),
             "bank_name": item.get("bank_name"),
