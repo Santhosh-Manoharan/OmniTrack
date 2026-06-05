@@ -210,6 +210,75 @@ async def create_from_llm(raw: dict):
     if not isinstance(txns, list):
         txns = [txns]
 
+    results = await _insert_txns(txns, response_text)
+    return {"inserted": len(results["results"]), "errors": len(results["errors"]), "results": results["results"], "error_details": results["errors"]}
+
+
+@app.post("/transactions/from-email", status_code=201)
+async def create_from_email(data: dict):
+    """
+    Accept email text, call Ollama to parse, extract JSON, and insert transactions.
+    n8n just sends the email text — no need to deal with Ollama JSON formatting.
+    Expected: { "email_text": "...", "email_from": "...", "email_subject": "...", "email_date": "..." }
+    """
+    import re
+    import httpx
+
+    email_text = data.get("email_text", "")
+    email_from = data.get("email_from", "")
+    email_subject = data.get("email_subject", "")
+    email_date = data.get("email_date", "")
+
+    prompt = f"""Parse this Indian bank transaction email and return ONLY a JSON array. Even if there is only one transaction, wrap it in an array [].
+
+Email Date: {email_date}
+Email Subject: {email_subject}
+Email From: {email_from}
+
+Email Content:
+{email_text}
+
+Return ONLY JSON array in this exact format:
+[{{"amount": number, "currency": "INR", "transaction_type": "DEBIT or CREDIT or TRANSFER", "merchant_name": "clean brand name or null", "merchant_upi": "UPI ID or null", "bank_name": "bank name", "account_last4": "last 4 digits or null", "category": "groceries/utilities/transport/food/entertainment/medical/education/rent/shopping/salary/transfer/fuel/insurance/emi/other", "date": "YYYY-MM-DD", "time": "HH:MM or null"}}]
+
+Rules:
+- amount: number only (no Rs/INR/commas)
+- merchant_upi: clean UPI ID (swiggyupi@axisbank)
+- merchant_name: brand name only (Swiggy, Amazon, etc.)
+- If field not found, use null
+- Return ONLY the JSON array, no explanation, no markdown"""
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post("http://ollama:11434/api/generate", json={
+                "model": "mistral:7b",
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 500}
+            })
+        response_text = resp.json().get("response", "")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
+
+    # Extract JSON array
+    match = re.search(r'\[.*\]', response_text, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=400, detail=f"No JSON array found: {response_text[:300]}")
+
+    try:
+        txns = json.loads(match.group())
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"JSON parse error: {e}, raw: {match.group()[:200]}")
+
+    if not isinstance(txns, list):
+        txns = [txns]
+
+    results = await _insert_txns(txns, email_text, source="bank_email")
+    return {"inserted": len(results["results"]), "errors": len(results["errors"]), "results": results["results"], "error_details": results["errors"]}
+
+
+async def _insert_txns(txns: list, raw_text: str, source: str = "bank_email"):
+    """Helper to insert a list of transaction dicts."""
     results = []
     errors = []
     for i, item in enumerate(txns):
@@ -223,14 +292,13 @@ async def create_from_llm(raw: dict):
             "bank_name": item.get("bank_name"),
             "account_identifier": item.get("account_last4") or item.get("account_identifier"),
             "category": item.get("category"),
-            "source": item.get("source", "bank_email"),
-            "raw_text": response_text[:1000],
+            "source": item.get("source", source),
+            "raw_text": raw_text[:1000],
         }
         if not txn_data["category"]:
             txn_data["category"] = classify_category(txn_data["merchant_name"], str(item))
         try:
             txn = TransactionCreate(**txn_data)
-            # Reuse insert logic
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("""
@@ -254,8 +322,7 @@ async def create_from_llm(raw: dict):
             results.append(dict(zip(col_names, row)))
         except Exception as e:
             errors.append({"index": i, "detail": str(e)})
-
-    return {"inserted": len(results), "errors": len(errors), "results": results, "error_details": errors}
+    return {"results": results, "errors": errors}
 
 
 @app.get("/transactions")
