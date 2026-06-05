@@ -1,0 +1,122 @@
+{
+  "name": "04-SMS-Capture",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook - SMS Incoming",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sms-capture",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "position": [500, 500],
+      "parameters": {
+        "model": "mistral:7b",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "llm",
+      "name": "Parse SMS",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [500, 300],
+      "parameters": {
+        "text": "You are a financial SMS parser. Parse this Indian bank SMS and return ONLY a valid JSON object.\n\nSMS From: {{ $json.from }}\nSMS Text: {{ $json.text }}\n\nReturn ONLY JSON in this exact format:\n{\"amount\": number, \"currency\": \"INR\", \"transaction_type\": \"DEBIT or CREDIT\", \"merchant_name\": \"brand or null\", \"bank_name\": \"bank or null\", \"account_last4\": \"4 digits or null\", \"category\": \"groceries/utilities/transport/food/entertainment/medical/education/rent/shopping/salary/transfer/fuel/insurance/emi/other\", \"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM or null\"}\n\nRules:\n- amount: number only (no Rs/INR/commas)\n- If field not found, use null\n- Return ONLY the JSON object, no explanation, no markdown",
+        "options": {
+          "systemMessage": "You parse Indian bank SMS messages. Always return valid JSON only."
+        }
+      },
+      "retryOnFail": true,
+      "typeVersion": 1.6
+    },
+    {
+      "id": "insert_txn",
+      "name": "Insert Transaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [750, 300],
+      "parameters": {
+        "url": "http://transaction-api:8090/transactions",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"amount\": {{ $json.output.amount }},\n  \"currency\": \"{{ $json.output.currency }}\",\n  \"transaction_type\": \"{{ $json.output.transaction_type }}\",\n  \"merchant_name\": \"{{ $json.output.merchant_name }}\",\n  \"bank_name\": \"{{ $json.output.bank_name }}\",\n  \"account_identifier\": \"{{ $json.output.account_last4 }}\",\n  \"category\": \"{{ $json.output.category }}\",\n  \"transaction_date\": \"{{ $json.output.date }}\",\n  \"source\": \"bank_sms\",\n  \"raw_text\": \"{{ $('Webhook - SMS Incoming').first().json.text }}\"\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "typeVersion": 4.4
+    },
+    {
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1000, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { 'success': true, 'amount': $json.output.amount, 'category': $json.output.category } }}"
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Webhook - SMS Incoming": {
+      "main": [
+        [
+          {
+            "node": "Parse SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Parse SMS",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse SMS": {
+      "main": [
+        [
+          {
+            "node": "Insert Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Transaction": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

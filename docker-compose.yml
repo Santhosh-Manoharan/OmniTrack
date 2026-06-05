@@ -109,10 +109,46 @@ services:
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/omnitrack.json
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana-dashboard-provider.yml:/etc/grafana/provisioning/dashboards/provider.yml:ro
+      - ./monitoring/grafana-dashboard.json:/var/lib/grafana/dashboards/omnitrack.json:ro
     ports:
       - "3000:3000"
+
+  transaction-api:
+    build:
+      context: ./transaction-api
+      dockerfile: Dockerfile
+    container_name: ot-transaction-api
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: omnitrack
+      POSTGRES_USER: ${POSTGRES_USER:-omnitrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  receipt-upload:
+    build:
+      context: ./receipt-upload
+      dockerfile: Dockerfile
+    container_name: ot-receipt-upload
+    restart: unless-stopped
+    environment:
+      N8N_WEBHOOK_URL: http://n8n:5678/webhook/upload-receipt
+      PAPERLESS_URL: http://paperless:8000
+    ports:
+      - "8091:8091"
+    depends_on:
+      - n8n
 
 volumes:
   postgres_data:
